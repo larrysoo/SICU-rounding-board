@@ -20,7 +20,8 @@
 - 一個需求 = 一個 issue = 一條 branch（`feat/<issue#>-短名`、`fix/<issue#>-短名`）
 - 不直接 commit 到 main；一律開 PR，PR 內寫 `Closes #<issue#>`
 - 改版時同步 bump：index.html 顯示版號 + sw.js `CACHE`
-- commit 前跑 `node scripts/check.mjs`
+- commit 前跑 `node scripts/check.mjs` 與 `for f in test/*.test.mjs; do node $f; done`
+- 新邏輯優先寫成可獨立測試的純函式，用 `test/harness.mjs` 的 `load([...])` 抽出測試
 - 動到資料結構：在 `mg()` 補 migration，舊資料必須能載入；localStorage key `larrys_sicu_rounds_v13_2b` 不可改
 - 學到的架構/規則寫進 wiki，不要在 repo 裡新增 handoff 類 .md
 

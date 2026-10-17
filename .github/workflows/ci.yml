@@ -12,3 +12,5 @@ jobs:
         with:
           node-version: 22
       - run: node scripts/check.mjs
+      - name: Unit tests
+        run: for f in test/*.test.mjs; do node "$f" || exit 1; done
