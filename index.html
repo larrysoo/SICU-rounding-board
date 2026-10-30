@@ -409,10 +409,10 @@ body {
 <div class="app-shell">
 <div class="app-bar">
   <span class="app-bar-title"><i class="ti ti-heartbeat"></i>Larry's SICU rounds</span>
-  <span class="app-bar-ver">v15.10.1 · offline-ready</span>
+  <span class="app-bar-ver">v15.11.0 · offline-ready</span>
 </div>
 <div class="icu-wrap">
-<div class="tb"><div><p class="tt">SICU rounding board</p><p style="font-size:12px;color:var(--color-text-secondary);margin:2px 0 0">v15.10.1 · GCS-T fix</p></div>
+<div class="tb"><div><p class="tt">SICU rounding board</p><p style="font-size:12px;color:var(--color-text-secondary);margin:2px 0 0">v15.11.0 · SOAP export for EMR</p></div>
 <div class="acts">
 <div class="vtg"><button id="vt-list" class="on"><i class="ti ti-list"></i>List</button><button id="vt-brd"><i class="ti ti-layout-grid"></i>Board</button><button id="vt-print"><i class="ti ti-printer"></i>Sheet</button></div>
 <button class="btn pri" id="b-newpt"><i class="ti ti-user-plus"></i>+Patient</button>
@@ -1108,7 +1108,18 @@ function txtDayRecord(p,t){
     giSx:giSx,
     allergy:al,
     events24:dy?.events?.e24||[], events8:dy?.events?.e8||[],
-    plans:aP
+    plans:aP,
+    /* v15.11.0 — raw values for the SOAP (EMR) export */
+    soap:{
+      icuDay:Object.keys(p.days).sort().indexOf(t)+1,
+      surg:(p.surgeries||[]).filter(s=>s.date&&s.date<=t).map(s=>({proc:s.proc,pod:Math.round((new Date(t+'T00:00:00')-new Date(s.date+'T00:00:00'))/864e5)})),
+      vis:v.t, vasoN:vas.length, mcsN:mcs.length, sedN:ninf.length,
+      mv:rsp.support_type==='MV', pf:an&&an.pf!=null?an.pf:null,
+      kdigo:k, dialysis:dl||null,
+      abxN:aA.length, nrsRisk:!!nrs.risk, nrsTotal:nrs.total,
+      txf:txfLine(dy)||'', hb:hm.hb, plt:hm.plt,
+      plansBy:Object.fromEntries(ORG.map(o=>[o.i,(dy?.[o.i]?.plan||[]).filter(pl=>!pl.done).map(pl=>pl.text)]))
+    }
   };
 }
 
@@ -1234,6 +1245,86 @@ function txtDayPlain(p,t){
   return s;
 }
 
+/* -------- Mode: SOAP (v15.11.0) — plain text for pasting into the EMR --------
+   S = interval events · O = by organ system · A/P = by problem.
+   Problems come only from recorded data + open plan items (no diagnosis is invented):
+   #1 admit Dx (± s/p surgery, POD) → organ problems that are flagged or have open plans. */
+function soapProblems(r){
+  const x=r.soap, pb=x.plansBy||{};
+  const pl=ks=>ks.reduce((a,k)=>a.concat(pb[k]||[]),[]);
+  const P=[];
+  const add=(title,a,ks,flag)=>{const items=pl(ks);if(flag||items.length)P.push({title:title,a:a,p:items})};
+  /* Hemodynamics */
+  const shock=x.vasoN>0||x.mcsN>0;
+  add(shock?'Circulatory failure on '+[x.vasoN?'vasoactives (VIS '+x.vis+')':null,x.mcsN?'MCS ('+r.mcs+')':null].filter(Boolean).join(' + '):'Hemodynamics',
+      r.vitals+(x.vasoN?' · '+r.vaso:''),['hemo'],shock);
+  /* Respiratory */
+  const ards=x.pf!=null&&x.pf<=300?(x.pf<=100?'severe':x.pf<=200?'moderate':'mild')+' ARDS criteria (P/F '+x.pf+')':null;
+  const rTitle=x.mv?'Acute respiratory failure on MV'+(ards?', '+ards:''):ards?'Hypoxemia, P/F '+x.pf:'Respiratory';
+  add(rTitle,r.resp+(r.abgAn?' · '+r.abgAn.summary:''),['resp','abg'],x.mv||!!ards);
+  /* Renal */
+  const aki=x.kdigo>0;
+  add(aki?'AKI, KDIGO '+x.kdigo+(x.dialysis?' on '+x.dialysis:''):x.dialysis?'Renal failure on '+x.dialysis:'Renal / fluid / electrolytes',
+      r.renal+' · '+r.fluid+' · '+r.lytes,['renal','lyte'],aki||!!x.dialysis);
+  /* Neuro / sedation */
+  add(x.sedN?'Sedation / analgesia':'Neuro',r.neuro+(x.sedN?' · '+r.sap:''),['neuro'],x.sedN>0);
+  /* Infection */
+  add(x.abxN?'Infection on antimicrobials':'Infection',r.inf+' · Abx: '+r.abx,['inf'],x.abxN>0);
+  /* Nutrition */
+  add(x.nrsRisk?'Nutritional risk (NRS-2002 '+x.nrsTotal+')':'Nutrition',r.nutrAch+' of '+r.nutrTarget,['nutr'],x.nrsRisk);
+  /* Heme */
+  add('Hematology',r.cbc,['heme'],!!x.txf);
+  return P;
+}
+function soapNote(r){
+  const p_=r.patient, x=r.soap, W=60;
+  const ln=(c)=>c.repeat(W)+'\n';
+  const evL=(arr)=>arr.length?arr.map(e=>'  - '+(e.time?e.time+' ':'')+e.text).join('\n')+'\n':'  - none\n';
+  let s='';
+  s+='ICU PROGRESS NOTE (SOAP)  '+r.date+'  ICU day '+x.icuDay+'\n';
+  s+=p_.name+'  '+p_.age+p_.sex+'  '+(p_.weight_kg||'?')+' kg  Bed '+p_.bed+'  MRN '+p_.mrn+'\n';
+  s+='Dx: '+(p_.admitDx||'—')+'\n';
+  x.surg.forEach(sg=>{s+='s/p '+sg.proc+' (POD '+sg.pod+')\n'});
+  s+='Allergy: '+r.allergy+'\n';
+  s+=ln('-');
+  s+='S:\n';
+  s+=' Events, last 24 h:\n'+evL(r.events24);
+  s+=' Events, last 8 h:\n'+evL(r.events8);
+  s+='\nO:\n';
+  s+=' Hemo   : '+r.vitals+'\n';
+  s+='          Vasoactive: '+r.vaso+(x.mcsN?' · MCS: '+r.mcs:'')+'\n';
+  s+=' Neuro  : '+r.neuro+' · Sed/Anal/Para: '+r.sap+'\n';
+  s+=' Resp   : '+r.resp+'\n';
+  if(r.abg){const ab=r.abg;
+    s+=' ABG    : '+(ab.time||'?')+' FiO2 '+(ab.fio2||'?')+'% · '+(ab.ph!=null?(+ab.ph).toFixed(2):'?')+'/'+txtN(ab.pco2)+'/'+txtN(ab.po2)+'/'+txtN(ab.hco3)+'\n';
+    if(r.abgAn)s+='          '+r.abgAn.summary+(r.abgAn.ag!=null?' · AG '+r.abgAn.ag:'')+(r.abgAn.pf!=null?' · P/F '+r.abgAn.pf:'')+'\n';
+  } else s+=' ABG    : none today\n';
+  s+=' Renal  : '+r.renal+'\n';
+  s+=' I/O    : '+r.fluid+'\n';
+  s+=' Lytes  : '+r.lytes+'\n';
+  s+=' GI/Nutr: '+(r.feeding.length?r.feeding.join(' / '):'NPO / no feeding')+'\n';
+  s+='          '+r.nutrAch+' · target '+r.nutrTarget+'\n';
+  if(r.glyc)s+='          Glycemic: '+r.glyc+'\n';
+  if(r.bowel)s+='          Bowel: '+r.bowel+'\n';
+  if(r.giSx.length)s+='          GI sx: '+r.giSx.join(', ')+'\n';
+  s+=' Heme   : '+r.cbc+'\n';
+  s+=' ID     : '+r.inf+'\n';
+  s+='          Abx: '+r.abx+'\n';
+  s+='\nA/P:\n';
+  let n=1;
+  s+='#'+(n++)+' '+(p_.admitDx||'Admission diagnosis')+(x.surg.length?', s/p '+x.surg.map(sg=>sg.proc+' POD '+sg.pod).join('; '):'')+'\n';
+  if(r.statusBadges.length)s+='   A: '+r.statusBadges.join(', ')+'\n';
+  soapProblems(r).forEach(pr=>{
+    s+='#'+(n++)+' '+pr.title+'\n';
+    s+='   A: '+pr.a+'\n';
+    s+=pr.p.length?pr.p.map(t=>'   P: '+t).join('\n')+'\n':'   P: —\n';
+  });
+  s+=ln('-');
+  s+='Attending: ____________   Fellow: ____________\n';
+  return s;
+}
+function txtDaySOAP(p,t){const r=txtDayRecord(p,t);return r?soapNote(r):''}
+
 /* -------- Mode: ASCII table (categorical timeline across days) -------- */
 function txtRangeASCII(p,days,title,subtitle){
   if(!days.length) return '(no days in range)\n';
@@ -1301,6 +1392,7 @@ function genSheetText(p,mode){
   const t=allDays[allDays.length-1];
   const last7=allDays.slice(-7);
   let out='';
+  if(mode==='soap') return txtDaySOAP(p,t);   /* today only — for pasting into the EMR */
   if(mode==='md'){
     out+=txtDayMD(p,t);
     if(allDays.length>=2){
@@ -1347,8 +1439,8 @@ function oTxtExport(){
         '<span style="font-size:11px;color:var(--color-text-secondary);font-weight:400">'+E(p.name)+' · '+E(p.bed)+'</span>'+
       '</h3>'+
       '<div class="txt-tabs" style="display:flex;gap:4px;margin:8px 0;border-bottom:1px solid var(--color-border-secondary)">'+
-        ['md','plain','ascii'].map(m=>{
-          const lbl=m==='md'?'Markdown':m==='plain'?'Plain text':'ASCII table';
+        ['md','plain','ascii','soap'].map(m=>{
+          const lbl=m==='md'?'Markdown':m==='plain'?'Plain text':m==='soap'?'SOAP (EMR)':'ASCII table';
           const on=m===mode;
           return '<button class="btn txt-tab'+(on?' pri':'')+'" data-m="'+m+'" style="border-radius:6px 6px 0 0;border-bottom:'+(on?'2px solid var(--color-text-accent)':'1px solid transparent')+'">'+lbl+'</button>';
         }).join('')+
@@ -1356,6 +1448,7 @@ function oTxtExport(){
       '<div style="font-size:11px;color:var(--color-text-secondary);margin-bottom:6px">'+
         (mode==='md'?'Markdown — best for Obsidian / EMR rich text editors':
          mode==='plain'?'Plain text — narrative format for handover / chat / notes':
+         mode==='soap'?'SOAP progress note (today) — plain text to paste into the EMR. A/P lists problems from recorded data + open plans; review before signing.':
          'ASCII table — best for monospace viewers / terminal / fixed-width fonts')+
       '</div>'+
       '<textarea id="txt-pv" readonly style="width:100%;height:420px;font-family:Menlo,Monaco,Consolas,monospace;font-size:11.5px;line-height:1.5;white-space:pre;overflow:auto;background:var(--color-background-secondary);color:var(--color-text-primary);border:.5px solid var(--color-border-tertiary);border-radius:6px;padding:10px;resize:vertical">'+E(txt)+'</textarea>'+
@@ -1397,7 +1490,7 @@ function oTxtExport(){
   buildModal();
 }
 
-function expJSON(){const data={version:"v15.10.1",exportedAt:new Date().toISOString(),vsPresets:S.vsPresets||[],pnPresets:S.pnPresets||[],enPresets:S.enPresets||[],abxPresets:S.abxPresets||[],specs:S.specs||[],patients:S.patients};const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='sicu_rounds_'+new Date().toISOString().slice(0,10)+'.json';document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url)}
+function expJSON(){const data={version:"v15.11.0",exportedAt:new Date().toISOString(),vsPresets:S.vsPresets||[],pnPresets:S.pnPresets||[],enPresets:S.enPresets||[],abxPresets:S.abxPresets||[],specs:S.specs||[],patients:S.patients};const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='sicu_rounds_'+new Date().toISOString().slice(0,10)+'.json';document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url)}
 function impJSON(file){const r=new FileReader();r.onload=(e)=>{try{const d=JSON.parse(e.target.result);if(!d.patients||!Array.isArray(d.patients))throw new Error('Invalid format');const presetCount=Array.isArray(d.vsPresets)?d.vsPresets.length:0;if(!confirm('Import '+d.patients.length+' patient(s)'+(presetCount?' + '+presetCount+' preset(s) (merged, not replaced)':'')+'?\n\nPatient data REPLACES current; preset library is MERGED.'))return;d.patients.forEach(mg);S.patients=d.patients;/* Merge presets — don't overwrite existing */if(presetCount){S.vsPresets=S.vsPresets||[];d.vsPresets.forEach(ps=>{const dup=S.vsPresets.find(x=>x.drug.toLowerCase()===ps.drug.toLowerCase()&&+x.amt===+ps.amt&&x.amtu===ps.amtu&&+x.vol===+ps.vol&&x.out===ps.out);if(!dup)S.vsPresets.push({...ps,id:ps.id||ud('vsp'),cat:vsRemapCat(ps.cat)})})}if(Array.isArray(d.pnPresets)){S.pnPresets=S.pnPresets||[];d.pnPresets.forEach(function(ps){const dup=S.pnPresets.find(function(x){return x.name.toLowerCase()===(ps.name||'').toLowerCase()&&x.type===ps.type;});if(!dup)S.pnPresets.push({id:ps.id||ud('pnp'),name:ps.name,type:ps.type,kcal_ml:ps.kcal_ml,protein_ml:ps.protein_ml});});}if(Array.isArray(d.enPresets)){S.enPresets=S.enPresets||[];d.enPresets.forEach(function(ps){const dup=S.enPresets.find(function(x){return x.name.toLowerCase()===(ps.name||'').toLowerCase();});if(!dup)S.enPresets.push({id:ps.id||ud('enp'),name:ps.name,kcal_ml:ps.kcal_ml,protein_ml:ps.protein_ml});});}if(Array.isArray(d.abxPresets)){S.abxPresets=S.abxPresets||[];d.abxPresets.forEach(function(ps){const dup=S.abxPresets.find(function(x){return abxCanon(x.name)===abxCanon(ps.name);});if(!dup)S.abxPresets.push({id:ps.id||ud('abp'),name:ps.name,dose:ps.dose||''});});}if(Array.isArray(d.specs)){S.specs=Array.isArray(S.specs)?S.specs:[];d.specs.forEach(function(sp){if(sp&&sp.id&&!S.specs.find(function(x){return x.id===sp.id||x.label===sp.label;}))S.specs.push(sp);});}S.currentId=d.patients[0]?.id;S.currentDay=S.currentId?Object.keys(d.patients[0].days).slice(-1)[0]:null;sv();rM();alert('Imported '+d.patients.length+' patient(s)'+(presetCount?', merged '+presetCount+' preset(s)':'')+'.')}catch(err){alert('Import failed: '+err.message)}};r.readAsText(file)}
 
 /* ===== v14.6.0 — Organ trend diagrams (infection fever-curve) ===== */
