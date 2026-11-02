@@ -409,10 +409,10 @@ body {
 <div class="app-shell">
 <div class="app-bar">
   <span class="app-bar-title"><i class="ti ti-heartbeat"></i>Larry's SICU rounds</span>
-  <span class="app-bar-ver">v15.11.0 · offline-ready</span>
+  <span class="app-bar-ver">v15.11.1 · offline-ready</span>
 </div>
 <div class="icu-wrap">
-<div class="tb"><div><p class="tt">SICU rounding board</p><p style="font-size:12px;color:var(--color-text-secondary);margin:2px 0 0">v15.11.0 · SOAP export for EMR</p></div>
+<div class="tb"><div><p class="tt">SICU rounding board</p><p style="font-size:12px;color:var(--color-text-secondary);margin:2px 0 0">v15.11.1 · SOAP: separate A and P</p></div>
 <div class="acts">
 <div class="vtg"><button id="vt-list" class="on"><i class="ti ti-list"></i>List</button><button id="vt-brd"><i class="ti ti-layout-grid"></i>Board</button><button id="vt-print"><i class="ti ti-printer"></i>Sheet</button></div>
 <button class="btn pri" id="b-newpt"><i class="ti ti-user-plus"></i>+Patient</button>
@@ -1246,7 +1246,7 @@ function txtDayPlain(p,t){
 }
 
 /* -------- Mode: SOAP (v15.11.0) — plain text for pasting into the EMR --------
-   S = interval events · O = by organ system · A/P = by problem.
+   S = interval events · O = by organ system · A = problems · P = plans, same #n as A.
    Problems come only from recorded data + open plan items (no diagnosis is invented):
    #1 admit Dx (± s/p surgery, POD) → organ problems that are flagged or have open plans. */
 function soapProblems(r){
@@ -1310,14 +1310,18 @@ function soapNote(r){
   s+=' Heme   : '+r.cbc+'\n';
   s+=' ID     : '+r.inf+'\n';
   s+='          Abx: '+r.abx+'\n';
-  s+='\nA/P:\n';
-  let n=1;
-  s+='#'+(n++)+' '+(p_.admitDx||'Admission diagnosis')+(x.surg.length?', s/p '+x.surg.map(sg=>sg.proc+' POD '+sg.pod).join('; '):'')+'\n';
-  if(r.statusBadges.length)s+='   A: '+r.statusBadges.join(', ')+'\n';
-  soapProblems(r).forEach(pr=>{
-    s+='#'+(n++)+' '+pr.title+'\n';
-    s+='   A: '+pr.a+'\n';
-    s+=pr.p.length?pr.p.map(t=>'   P: '+t).join('\n')+'\n':'   P: —\n';
+  /* v15.11.1 — A and P are separate sections; P items carry the same #n as the A problem */
+  const probs=[{title:(p_.admitDx||'Admission diagnosis')+(x.surg.length?', s/p '+x.surg.map(sg=>sg.proc+' POD '+sg.pod).join('; '):''),
+                a:r.statusBadges.join(', '),p:[]}].concat(soapProblems(r));
+  s+='\nA:\n';
+  probs.forEach((pr,i)=>{
+    s+='#'+(i+1)+' '+pr.title+'\n';
+    if(pr.a)s+='   '+pr.a+'\n';
+  });
+  s+='\nP:\n';
+  probs.forEach((pr,i)=>{
+    s+='#'+(i+1)+' '+pr.title+'\n';
+    s+=pr.p.length?pr.p.map(t=>'   - '+t).join('\n')+'\n':'   - —\n';
   });
   s+=ln('-');
   s+='Attending: ____________   Fellow: ____________\n';
@@ -1448,7 +1452,7 @@ function oTxtExport(){
       '<div style="font-size:11px;color:var(--color-text-secondary);margin-bottom:6px">'+
         (mode==='md'?'Markdown — best for Obsidian / EMR rich text editors':
          mode==='plain'?'Plain text — narrative format for handover / chat / notes':
-         mode==='soap'?'SOAP progress note (today) — plain text to paste into the EMR. A/P lists problems from recorded data + open plans; review before signing.':
+         mode==='soap'?'SOAP progress note (today) — plain text to paste into the EMR. A lists problems from recorded data; P lists open plans under the same #. Review before signing.':
          'ASCII table — best for monospace viewers / terminal / fixed-width fonts')+
       '</div>'+
       '<textarea id="txt-pv" readonly style="width:100%;height:420px;font-family:Menlo,Monaco,Consolas,monospace;font-size:11.5px;line-height:1.5;white-space:pre;overflow:auto;background:var(--color-background-secondary);color:var(--color-text-primary);border:.5px solid var(--color-border-tertiary);border-radius:6px;padding:10px;resize:vertical">'+E(txt)+'</textarea>'+
@@ -1490,7 +1494,7 @@ function oTxtExport(){
   buildModal();
 }
 
-function expJSON(){const data={version:"v15.11.0",exportedAt:new Date().toISOString(),vsPresets:S.vsPresets||[],pnPresets:S.pnPresets||[],enPresets:S.enPresets||[],abxPresets:S.abxPresets||[],specs:S.specs||[],patients:S.patients};const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='sicu_rounds_'+new Date().toISOString().slice(0,10)+'.json';document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url)}
+function expJSON(){const data={version:"v15.11.1",exportedAt:new Date().toISOString(),vsPresets:S.vsPresets||[],pnPresets:S.pnPresets||[],enPresets:S.enPresets||[],abxPresets:S.abxPresets||[],specs:S.specs||[],patients:S.patients};const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='sicu_rounds_'+new Date().toISOString().slice(0,10)+'.json';document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url)}
 function impJSON(file){const r=new FileReader();r.onload=(e)=>{try{const d=JSON.parse(e.target.result);if(!d.patients||!Array.isArray(d.patients))throw new Error('Invalid format');const presetCount=Array.isArray(d.vsPresets)?d.vsPresets.length:0;if(!confirm('Import '+d.patients.length+' patient(s)'+(presetCount?' + '+presetCount+' preset(s) (merged, not replaced)':'')+'?\n\nPatient data REPLACES current; preset library is MERGED.'))return;d.patients.forEach(mg);S.patients=d.patients;/* Merge presets — don't overwrite existing */if(presetCount){S.vsPresets=S.vsPresets||[];d.vsPresets.forEach(ps=>{const dup=S.vsPresets.find(x=>x.drug.toLowerCase()===ps.drug.toLowerCase()&&+x.amt===+ps.amt&&x.amtu===ps.amtu&&+x.vol===+ps.vol&&x.out===ps.out);if(!dup)S.vsPresets.push({...ps,id:ps.id||ud('vsp'),cat:vsRemapCat(ps.cat)})})}if(Array.isArray(d.pnPresets)){S.pnPresets=S.pnPresets||[];d.pnPresets.forEach(function(ps){const dup=S.pnPresets.find(function(x){return x.name.toLowerCase()===(ps.name||'').toLowerCase()&&x.type===ps.type;});if(!dup)S.pnPresets.push({id:ps.id||ud('pnp'),name:ps.name,type:ps.type,kcal_ml:ps.kcal_ml,protein_ml:ps.protein_ml});});}if(Array.isArray(d.enPresets)){S.enPresets=S.enPresets||[];d.enPresets.forEach(function(ps){const dup=S.enPresets.find(function(x){return x.name.toLowerCase()===(ps.name||'').toLowerCase();});if(!dup)S.enPresets.push({id:ps.id||ud('enp'),name:ps.name,kcal_ml:ps.kcal_ml,protein_ml:ps.protein_ml});});}if(Array.isArray(d.abxPresets)){S.abxPresets=S.abxPresets||[];d.abxPresets.forEach(function(ps){const dup=S.abxPresets.find(function(x){return abxCanon(x.name)===abxCanon(ps.name);});if(!dup)S.abxPresets.push({id:ps.id||ud('abp'),name:ps.name,dose:ps.dose||''});});}if(Array.isArray(d.specs)){S.specs=Array.isArray(S.specs)?S.specs:[];d.specs.forEach(function(sp){if(sp&&sp.id&&!S.specs.find(function(x){return x.id===sp.id||x.label===sp.label;}))S.specs.push(sp);});}S.currentId=d.patients[0]?.id;S.currentDay=S.currentId?Object.keys(d.patients[0].days).slice(-1)[0]:null;sv();rM();alert('Imported '+d.patients.length+' patient(s)'+(presetCount?', merged '+presetCount+' preset(s)':'')+'.')}catch(err){alert('Import failed: '+err.message)}};r.readAsText(file)}
 
 /* ===== v14.6.0 — Organ trend diagrams (infection fever-curve) ===== */

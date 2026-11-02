@@ -58,16 +58,22 @@ has('POD', "s/p Hartmann's (POD 3)");
 has('S events', '  - 22:00 NE up-titrated');
 has('empty 8h', ' Events, last 8 h:\n  - none');
 has('ABG line', ' ABG    : 06:00 FiO2 40% · 7.31/42/80/20');
-has('#1 admit Dx', "#1 Perforated diverticulitis, s/p Hartmann's POD 3");
-has('#2 shock', '#2 Circulatory failure on vasoactives (VIS 10)');
-has('plan line', '   P: Wean NE to MAP ≥ 65');
-has('no plan placeholder', '#4 AKI, KDIGO 2\n   A: Cr 2.1 · KDIGO 2 · no RRT · UO 400 mL · Today +1200 · Cum +3,500 · Na 138 · K 4.1 · Cl 104 · iCa 1.1\n   P: —');
-eq('order S → O → A/P', s.indexOf('S:\n') < s.indexOf('\nO:\n') && s.indexOf('\nO:\n') < s.indexOf('\nA/P:\n'), true);
+has('#1 admit Dx (A)', "A:\n#1 Perforated diverticulitis, s/p Hartmann's POD 3\n   VIS 10, KDIGO 2\n");
+has('#2 shock (A)', '#2 Circulatory failure on vasoactives (VIS 10)\n   MAP 68');
+has('#1 in P, no plan', "P:\n#1 Perforated diverticulitis, s/p Hartmann's POD 3\n   - —\n");
+has('P matches A number + plan', '#2 Circulatory failure on vasoactives (VIS 10)\n   - Wean NE to MAP ≥ 65');
+has('P no plan placeholder', '#4 AKI, KDIGO 2\n   - —');
+const A = s.slice(s.indexOf('\nA:\n'), s.indexOf('\nP:\n')), Pp = s.slice(s.indexOf('\nP:\n'));
+eq('A section has no plans', A.includes('Wean NE'), false);
+eq('P section has no assessment data', Pp.includes('MAP 68'), false);
+eq('same problem numbers in A and P', (A.match(/^#\d+ .*/gm) || []).join('|'), (Pp.match(/^#\d+ .*/gm) || []).join('|'));
+eq('no merged A/P header', s.includes('A/P:'), false);
+eq('order S → O → A → P', s.indexOf('S:\n') < s.indexOf('\nO:\n') && s.indexOf('\nO:\n') < s.indexOf('\nA:\n') && s.indexOf('\nA:\n') < s.indexOf('\nP:\n'), true);
 eq('no markdown symbols', /[*`|]/.test(s), false);
 
 const noAbg = base(); noAbg.abg = null; noAbg.abgAn = null; noAbg.soap.surg = [];
 const s2 = t.soapNote(noAbg);
 eq('no ABG', s2.includes(' ABG    : none today'), true);
-eq('no surgery → plain #1', s2.includes('#1 Perforated diverticulitis\n'), true);
+eq('no surgery → plain #1', s2.includes('A:\n#1 Perforated diverticulitis\n'), true);
 
 done();
